@@ -54,6 +54,19 @@ iuc () {
 	return $ret
 }
 
+get_relevant_traces() {
+	# From the GIT_TRACE2_PERF data of the form
+	#    $TIME $FILE:$LINE | d0 | main | data | r1 | ? | ? | read_directo | $RELEVANT_STAT
+	# extract the $RELEVANT_STAT fields.  We don't care about region_enter
+	# or region_leave, or stats for things outside read_directory.
+	INPUT_FILE=$1
+	OUTPUT_FILE=$2
+	grep data.*read_directo $INPUT_FILE \
+	    | cut -d "|" -f 9 \
+	    >$OUTPUT_FILE
+}
+
+
 test_lazy_prereq UNTRACKED_CACHE '
 	{ git update-index --test-untracked-cache; ret=$?; } &&
 	test $ret -ne 1
@@ -126,19 +139,20 @@ EOF
 
 test_expect_success 'status first time (empty cache)' '
 	avoid_racy &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 3
-gitignore invalidation: 1
-directory invalidation: 0
-opendir: 4
+ ..node-creation:3
+ ..gitignore-invalidation:1
+ ..directory-invalidation:0
+ ..opendir:4
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'untracked cache after first status' '
@@ -148,19 +162,20 @@ test_expect_success 'untracked cache after first status' '
 
 test_expect_success 'status second time (fully populated cache)' '
 	avoid_racy &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 0
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:0
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'untracked cache after second status' '
@@ -171,8 +186,8 @@ test_expect_success 'untracked cache after second status' '
 test_expect_success 'modify in root directory, one dir invalidation' '
 	avoid_racy &&
 	: >four &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -186,13 +201,14 @@ A  two
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 1
-opendir: 1
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:1
+ ..opendir:1
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 
 '
 
@@ -220,8 +236,8 @@ EOF
 test_expect_success 'new .gitignore invalidates recursively' '
 	avoid_racy &&
 	echo four >.gitignore &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -235,13 +251,14 @@ A  two
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 1
-directory invalidation: 1
-opendir: 4
+ ..node-creation:0
+ ..gitignore-invalidation:1
+ ..directory-invalidation:1
+ ..opendir:4
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 
 '
 
@@ -269,8 +286,8 @@ EOF
 test_expect_success 'new info/exclude invalidates everything' '
 	avoid_racy &&
 	echo three >>.git/info/exclude &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -282,13 +299,14 @@ A  two
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 1
-directory invalidation: 0
-opendir: 4
+ ..node-creation:0
+ ..gitignore-invalidation:1
+ ..directory-invalidation:0
+ ..opendir:4
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'verify untracked cache dump' '
@@ -327,8 +345,8 @@ EOF
 '
 
 test_expect_success 'status after the move' '
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -340,13 +358,14 @@ A  one
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 1
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:1
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'verify untracked cache dump' '
@@ -386,8 +405,8 @@ EOF
 '
 
 test_expect_success 'status after the move' '
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -399,13 +418,14 @@ A  two
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 1
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:1
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'verify untracked cache dump' '
@@ -435,8 +455,8 @@ test_expect_success 'set up for sparse checkout testing' '
 '
 
 test_expect_success 'status after commit' '
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -445,13 +465,14 @@ test_expect_success 'status after commit' '
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 2
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:2
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'untracked cache correct after commit' '
@@ -493,9 +514,9 @@ test_expect_success 'create/modify files, some of which are gitignored' '
 '
 
 test_expect_success 'test sparse status with untracked cache' '
-	: >../trace &&
+	: >../trace.output &&
 	avoid_racy &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../status.actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -506,13 +527,14 @@ test_expect_success 'test sparse status with untracked cache' '
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../status.actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 1
-directory invalidation: 2
-opendir: 2
+ ..node-creation:0
+ ..gitignore-invalidation:1
+ ..directory-invalidation:2
+ ..opendir:2
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'untracked cache correct after status' '
@@ -536,8 +558,8 @@ EOF
 
 test_expect_success 'test sparse status again with untracked cache' '
 	avoid_racy &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../status.actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -548,13 +570,14 @@ test_expect_success 'test sparse status again with untracked cache' '
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../status.actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 0
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:0
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'set up for test of subdir and sparse checkouts' '
@@ -565,8 +588,8 @@ test_expect_success 'set up for test of subdir and sparse checkouts' '
 
 test_expect_success 'test sparse status with untracked cache and subdir' '
 	avoid_racy &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../status.actual &&
 	iuc status --porcelain >../status.iuc &&
 	cat >../status.expect <<EOF &&
@@ -578,13 +601,14 @@ test_expect_success 'test sparse status with untracked cache and subdir' '
 EOF
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../status.actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 2
-gitignore invalidation: 0
-directory invalidation: 1
-opendir: 3
+ ..node-creation:2
+ ..gitignore-invalidation:0
+ ..directory-invalidation:1
+ ..opendir:3
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'verify untracked cache dump (sparse/subdirs)' '
@@ -613,19 +637,20 @@ EOF
 
 test_expect_success 'test sparse status again with untracked cache and subdir' '
 	avoid_racy &&
-	: >../trace &&
-	GIT_TRACE_UNTRACKED_STATS="$TRASH_DIRECTORY/trace" \
+	: >../trace.output &&
+	GIT_TRACE2_PERF="$TRASH_DIRECTORY/trace.output" \
 	git status --porcelain >../status.actual &&
 	iuc status --porcelain >../status.iuc &&
 	test_cmp ../status.expect ../status.iuc &&
 	test_cmp ../status.expect ../status.actual &&
+	get_relevant_traces ../trace.output ../trace.relevant &&
 	cat >../trace.expect <<EOF &&
-node creation: 0
-gitignore invalidation: 0
-directory invalidation: 0
-opendir: 0
+ ..node-creation:0
+ ..gitignore-invalidation:0
+ ..directory-invalidation:0
+ ..opendir:0
 EOF
-	test_cmp ../trace.expect ../trace
+	test_cmp ../trace.expect ../trace.relevant
 '
 
 test_expect_success 'move entry in subdir from untracked to cached' '
